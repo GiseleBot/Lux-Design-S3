@@ -2,6 +2,7 @@ from lux.utils import direction_to
 import sys
 import numpy as np
 import logging
+from baselogic import save_relic_nodes, get_unit_data, find_nearest_relic_node, explore, attack_nearest_enemy, move_toward_target
 logger = logging.getLogger(__name__)
 logging.basicConfig(filename='example.log', encoding='utf-8', level=logging.DEBUG)
 
@@ -23,9 +24,11 @@ class Agent():
         self.enemy_positions = []
         self.discovered_enemy_ids = set()
 
+    
+
 
     def act(self, step: int, obs, remainingOverageTime: int = 60):
-        return self.balance(step, obs, remainingOverageTime)
+        return self.custom_logic(step, obs, remainingOverageTime)
     
     def default(self, step: int, obs, remainingOverageTime: int = 60):
         """implement this function to decide what actions to send to each available unit. 
@@ -228,7 +231,6 @@ class Agent():
                 actions[unit_id] = [direction_to(
                     unit_pos, self.unit_explore_locations[unit_id]), 0, 0]
         return actions
-
     
     def attack(self, step: int, obs, remainingOverageTime: int = 60):
         """implement this function to decide what actions to send to each available unit. 
@@ -289,4 +291,50 @@ class Agent():
                 actions[unit_id] = [direction_to(
                     unit_pos, self.unit_explore_locations[unit_id]), 0, 0]
         
+        return actions
+    
+    def custom_logic(self, step, obs, remainingOverageTime=60):
+        # Get unit data
+        unit_data = get_unit_data(self.team_id, self.opp_team_id, obs)
+        actions = np.zeros((self.env_cfg["max_units"], 3), dtype=int)
+
+        # Assign unit data
+        unit_mask = unit_data["unit_mask"]
+        unit_positions = unit_data["unit_positions"]
+        unit_energys = unit_data["unit_energys"]
+        enemy_mask = unit_data["enemy_mask"]
+        enemy_positions = unit_data["enemy_positions"]
+        available_unit_ids = unit_data["available_unit_ids"]
+        visible_enemy_units = unit_data["visible_enemy_units"]
+        observed_relic_node_positions = unit_data["observed_relic_node_positions"]
+        observed_relic_nodes_mask = unit_data["observed_relic_nodes_mask"]
+        visible_relic_node_ids = unit_data["visible_relic_node_ids"]
+        team_points = unit_data["team_points"]
+
+        for unit_id in available_unit_ids:
+            unit_pos = unit_positions[unit_id]
+
+            # Save relic nodes
+            saved_relic_data = save_relic_nodes(unit_id, visible_relic_node_ids, observed_relic_node_positions, self.discovered_relic_nodes_ids, self.relic_node_positions)
+            self.relic_node_positions = saved_relic_data["relic_node_positions"]
+            self.discovered_relic_nodes_ids = saved_relic_data["discovered_relic_nodes_ids"]
+
+            # Get nearest relic node and actions data
+            actions_data = find_nearest_relic_node(unit_pos, self.relic_node_positions)
+            movement_type = actions_data["movement_type"]
+            destination = actions_data["actions_data"]
+
+            if movement_type == "move_toward":
+                # Move towards the relic node
+                actions[unit_id] = [direction_to(unit_pos, destination), 0, 0]
+            elif movement_type == "close_to_relic":
+                # If close to the relic node, move randomly
+                actions[unit_id] = [destination, 0, 0]
+            else:
+                # no relic nodes found, explore map
+                if step % 16 == 0 or unit_id not in self.unit_explore_locations:
+                    rand_loc = (np.random.randint(0, self.env_cfg["map_width"]), np.random.randint(0, self.env_cfg["map_height"]))
+                    self.unit_explore_locations[unit_id] = rand_loc
+                actions[unit_id] = [direction_to(unit_pos, self.unit_explore_locations[unit_id]), 0, 0]
+
         return actions
